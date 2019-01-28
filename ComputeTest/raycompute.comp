@@ -1,0 +1,139 @@
+#version 440 core
+
+layout(local_size_x = 1, local_size_y = 1) in;
+layout(rgba32f, binding=0) uniform image2D img_output;
+
+#define NUM_SAMPLES 8
+
+struct Ray {
+	vec3 A;
+	vec3 B;
+};
+
+struct Sphere {
+	vec3 C;
+	float R;
+};
+
+vec4 color(Ray r);
+
+struct Camera {
+	vec3 lower_left;
+	vec3 horz;
+	vec3 vert;
+	vec3 origin;
+};
+
+Ray GetRay(Camera cam, float x, float y);
+
+float Noise(vec2 uv);
+float RNG(vec2 uv);
+vec3 RandomInUnitSphere(vec2 uv);
+
+float rand = 0.0f;
+
+void main() {
+
+	ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
+	ivec2 dims = imageSize(img_output);
+	
+	Camera cam;
+	cam.lower_left = vec3(-2.0f, -1.0f, -1.0f);
+	cam.horz = vec3(4.0f, 0.0f, 0.0f);
+	cam.vert = vec3(0.0f, 2.0f, 0.0f);
+	cam.origin = vec3(0.0f);
+
+	vec4 pixel = vec4(0.0f);
+	for (int i = 0; i < NUM_SAMPLES; i++) {
+		float x = (pixel_coords.x + RNG(dims+i*1603.0f))/float(dims.x);
+		float y = (pixel_coords.y + RNG(dims+i*1603.0f))/float(dims.y);
+		Ray r = GetRay(cam, x, y);
+		pixel += color(r);
+	}
+	pixel = pixel/float(NUM_SAMPLES);
+
+	imageStore(img_output, pixel_coords, pixel);
+
+}
+
+struct HitInfo {
+	bool hit;
+	vec3 hitpoint;
+	float t;
+	vec3 normal;
+};
+
+HitInfo hit_sphere(Sphere s, Ray r);
+
+#define NUM_SPHERES 2
+Sphere sph[] = {
+	{vec3(0,0,-1), 0.5f},
+	{vec3(0,-1000.5,-1), 1000.0f}
+};
+
+Ray GetRay(Camera cam, float x, float y)  {
+	Ray r = {cam.origin, (cam.lower_left + x*cam.horz + y*cam.vert)};
+	return r;
+}
+
+HitInfo WorldHit(Ray r) {
+	HitInfo hmin;
+	hmin.hit = false;
+	hmin.t = 1000.0f;
+	for (int i = 0; i < NUM_SPHERES; i++) {
+		HitInfo h = hit_sphere(sph[i],r);
+		if (h.hit) {
+			if (hmin.t > h.t) {
+				hmin = h;
+			}
+		}
+	}
+	return hmin;
+}
+
+vec4 color(Ray r) {
+	HitInfo h = WorldHit(r);
+	if (h.hit) {
+		return vec4((h.normal+1.0f)*0.5f, 1.0f);
+	}
+	float t = 0.5f * (normalize(r.B).y + 1.0f);
+	return vec4(((1.0f-t)*vec3(1.0f) + t * vec3(0.5f, 0.7f, 1.0f)),1.0f);
+}
+
+HitInfo hit_sphere(Sphere s, Ray r) {
+	vec3 oc = r.A - s.C;
+	float a = dot(r.B, r.B);
+	float b = 2.0f * dot(oc, r.B);
+	float c = dot(oc, oc) - s.R*s.R;
+	float disc = b*b - 4*a*c;
+	HitInfo h;
+	h.hit = (disc >= 0.0f);
+	if (!h.hit) {
+		return h;
+	}
+	h.t = (-b - sqrt(disc))/(2.0f*a);
+	if (h.t < 0.0f) {
+		h.hit = false;
+		return h;
+	}
+	h.hitpoint = r.A + h.t * r.B;
+	h.normal = normalize(h.hitpoint - s.C);
+	return h;
+}
+
+float Noise(vec2 uv) {
+	return fract(52.9828189f * fract(0.06711056f * uv.x + 0.00583715f * uv.y));
+}
+
+float RNG(vec2 uv) {
+	return Noise(floor(uv) + rand++);
+}
+
+vec3 RandomInUnitSphere(vec2 uv) {
+	vec3 val = vec3(1.0f);
+	do {
+		val = vec3(RNG(uv),RNG(uv),RNG(uv));
+	} while (length(val) > 1.0f);
+
+	return val;
+} 
