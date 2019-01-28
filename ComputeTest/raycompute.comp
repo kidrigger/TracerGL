@@ -4,6 +4,7 @@ layout(local_size_x = 1, local_size_y = 1) in;
 layout(rgba32f, binding=0) uniform image2D img_output;
 
 #define NUM_SAMPLES 8
+#define MAX_DEPTH 10
 
 struct Ray {
 	vec3 A;
@@ -26,16 +27,47 @@ struct Camera {
 
 Ray GetRay(Camera cam, float x, float y);
 
-float Noise(vec2 uv);
-float RNG(vec2 uv);
-vec3 RandomInUnitSphere(vec2 uv);
+uint rng_state;
+uint wang_hash(uint seed)
+{
+    seed = (seed ^ 61) ^ (seed >> 16);
+    seed *= 9;
+    seed = seed ^ (seed >> 4);
+    seed *= 0x27d4eb2d;
+    seed = seed ^ (seed >> 15);
+    return seed;
+}
 
-float rand = 0.0f;
+const float inv_int_max = (1.0f/4294967296.0);
+
+uint rand_xorshift()
+{
+    // Xorshift algorithm from George Marsaglia's paper
+    rng_state ^= (rng_state << 13);
+    rng_state ^= (rng_state >> 17);
+    rng_state ^= (rng_state << 5);
+    return rng_state;
+}
+//
+//uint rand_lcg()
+//{
+//    // LCG values from Numerical Recipes
+//    rng_state = 1664525 * rng_state + 1013904223;
+//    return rng_state;
+//}
+//
+float rng() {
+	return rand_xorshift() * inv_int_max;
+}
+
+vec3 RandomInUnitSphere();
 
 void main() {
 
 	ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
 	ivec2 dims = imageSize(img_output);
+
+	rng_state = wang_hash(0x1603AB + wang_hash(gl_GlobalInvocationID.x + wang_hash(gl_GlobalInvocationID.y)));
 	
 	Camera cam;
 	cam.lower_left = vec3(-2.0f, -1.0f, -1.0f);
@@ -45,12 +77,13 @@ void main() {
 
 	vec4 pixel = vec4(0.0f);
 	for (int i = 0; i < NUM_SAMPLES; i++) {
-		float x = (pixel_coords.x + RNG(dims+i*1603.0f))/float(dims.x);
-		float y = (pixel_coords.y + RNG(dims+i*1603.0f))/float(dims.y);
+		float x = (pixel_coords.x + rng())/float(dims.x);
+		float y = (pixel_coords.y + rng())/float(dims.y);
 		Ray r = GetRay(cam, x, y);
 		pixel += color(r);
 	}
-	pixel = pixel/float(NUM_SAMPLES);
+
+	pixel /= NUM_SAMPLES;
 
 	imageStore(img_output, pixel_coords, pixel);
 
@@ -83,7 +116,7 @@ HitInfo WorldHit(Ray r) {
 	for (int i = 0; i < NUM_SPHERES; i++) {
 		HitInfo h = hit_sphere(sph[i],r);
 		if (h.hit) {
-			if (hmin.t > h.t) {
+			if (hmin.t > h.t && h.t > 0.00001f) {
 				hmin = h;
 			}
 		}
@@ -92,12 +125,23 @@ HitInfo WorldHit(Ray r) {
 }
 
 vec4 color(Ray r) {
-	HitInfo h = WorldHit(r);
-	if (h.hit) {
-		return vec4((h.normal+1.0f)*0.5f, 1.0f);
+
+	vec3 color = vec3(1.0f);
+	
+	for (int depth = 0; depth < MAX_DEPTH; depth++) {
+		HitInfo h = WorldHit(r);
+		if (h.hit) {
+			color *= vec3(0.5f);
+			r.A = h.hitpoint;
+			r.B = RandomInUnitSphere() + h.normal;
+		} 
+		else {
+			float t = 0.5f * (normalize(r.B).y + 1.0f);
+			color*= ((1.0f-t)*vec3(1.0f) + t * vec3(0.5f, 0.7f, 1.0f));
+			break;
+		}
 	}
-	float t = 0.5f * (normalize(r.B).y + 1.0f);
-	return vec4(((1.0f-t)*vec3(1.0f) + t * vec3(0.5f, 0.7f, 1.0f)),1.0f);
+	return vec4(color, 1.0f);
 }
 
 HitInfo hit_sphere(Sphere s, Ray r) {
@@ -121,19 +165,11 @@ HitInfo hit_sphere(Sphere s, Ray r) {
 	return h;
 }
 
-float Noise(vec2 uv) {
-	return fract(52.9828189f * fract(0.06711056f * uv.x + 0.00583715f * uv.y));
-}
-
-float RNG(vec2 uv) {
-	return Noise(floor(uv) + rand++);
-}
-
-vec3 RandomInUnitSphere(vec2 uv) {
-	vec3 val = vec3(1.0f);
+vec3 RandomInUnitSphere() {
+	vec3 point = vec3(1.0f);
 	do {
-		val = vec3(RNG(uv),RNG(uv),RNG(uv));
-	} while (length(val) > 1.0f);
+		point = vec3(rng(),rng(),rng());
+	} while (length(point) >= 1.0f);
 
-	return val;
-} 
+	return point;
+}

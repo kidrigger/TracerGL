@@ -5,6 +5,10 @@
 
 #include "Shader.h"
 
+extern "C" {
+	_declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
+}
+
 int main() {
 
 	GLFWwindow* window = nullptr;
@@ -39,6 +43,8 @@ int main() {
 		std::cin.ignore();
 		return 1;
 	}
+
+	std::cout << glGetString(GL_VENDOR) << ' ' << glGetString(GL_RENDERER) << std::endl;
 
 	// Creating the texture for the output from the raytracer.
 	const int TEX_W = WIDTH, TEX_H = HEIGHT;
