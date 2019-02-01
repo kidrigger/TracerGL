@@ -4,6 +4,8 @@
 #include "GLFW/glfw3.h"
 
 #include "Shader.h"
+#include "Camera.h"
+#include <random>
 
 extern "C" {
 	_declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
@@ -13,8 +15,8 @@ int main() {
 
 	GLFWwindow* window = nullptr;
 
-	const int WIDTH = 1024;
-	const int HEIGHT = 512;
+	const int WIDTH = 1920;
+	const int HEIGHT = 1080;
 
 	if (!glfwInit()) {
 		std::cerr << "ERR::GLFW::INIT_FAIL" << std::endl;
@@ -27,7 +29,7 @@ int main() {
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 
-	window = glfwCreateWindow(WIDTH, HEIGHT, "N-Body", nullptr, nullptr);
+	window = glfwCreateWindow(WIDTH, HEIGHT, "TracerGL", glfwGetPrimaryMonitor(), nullptr);
 	if (!window) {
 		std::cerr << "ERR::GLFW::WNDW_CREATE_FAIL" << std::endl;
 		glfwTerminate();
@@ -58,7 +60,7 @@ int main() {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, TEX_W, TEX_H, 0, GL_RGBA, GL_FLOAT, NULL);
 
-	glBindImageTexture(0, tex_output, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
+	glBindImageTexture(0, tex_output, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32F);
 
 	int work_grp_cnt[3];
 	glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_COUNT, 0, &work_grp_cnt[0]);
@@ -95,12 +97,32 @@ int main() {
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
 	glEnableVertexAttribArray(0);
 
+	int iteration = 0;
+
+	Camera cam({ -2,2,1 }, { 0,0,-1 }, { 0,1,0 }, 30.0f, (float)WIDTH / (float)HEIGHT, 0.1f);
+	cam.Bind(compshdr);
+
+	// SSBO for rng
+	std::vector<GLuint> init_rng;
+	init_rng.resize(WIDTH * HEIGHT);
+	for (GLuint& i : init_rng) {
+		i = rand();
+	}
+	compshdr.use();
+	GLuint SSBO;
+	glGenBuffers(1, &SSBO);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, SSBO);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, init_rng.size() * sizeof(GLuint), init_rng.data(), GL_DYNAMIC_DRAW);
+
+	bool wait_after_quit = false;
+
 	while (!glfwWindowShouldClose(window)) {
 
 		{
 			compshdr.use();
-			/*compshdr.setVector("leftBottom", glm::vec3{ -1.0f, -1.0f, 0.0f });
-			compshdr.setVector("rightTop", glm::vec3{ 1.0f, 1.0f, 0.0f });*/
+			compshdr.setInt("iteration",iteration++);
+			compshdr.setFloat("time", glfwGetTime());
+			compshdr.setInt("seed", rand());
 			glDispatchCompute((GLuint)TEX_W, (GLuint)TEX_H, 1);
 		}
 
@@ -118,15 +140,25 @@ int main() {
 		glfwPollEvents();
 		if (glfwGetKey(window, GLFW_KEY_SPACE) || glfwGetKey(window, GLFW_KEY_ESCAPE) || glfwGetKey(window, GLFW_KEY_ENTER)) {
 			glfwSetWindowShouldClose(window, GLFW_TRUE);
+			if (glfwGetKey(window, GLFW_KEY_ENTER)) {
+				wait_after_quit = true;
+			}
 		}
 		glfwSwapBuffers(window);
 		
 	}
 
+	glDeleteBuffers(1, &VBO);
+	glDeleteBuffers(1, &SSBO);
+	glDeleteTextures(1, &tex_output);
+	glDeleteVertexArrays(1, &VAO);
+
 	glfwDestroyWindow(window);
 	glfwTerminate();
 
-	std::cin.ignore();
+	if (wait_after_quit) {
+		std::cin.ignore();
+	}
 
 	return 0;
 }

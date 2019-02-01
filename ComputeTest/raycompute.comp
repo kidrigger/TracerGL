@@ -1,10 +1,33 @@
 #version 440 core
 
+// Layouts
 layout(local_size_x = 1, local_size_y = 1) in;
 layout(rgba32f, binding=0) uniform image2D img_output;
+layout (std430, binding=1) buffer rngstatebuf {
+	uint state[];
+};
 
-#define NUM_SAMPLES 8
-#define MAX_DEPTH 10
+// Constants
+const int MAX_DEPTH = 25;
+const float INV_INT_MAX = (1.0f/4294967296.0);
+const uint MAT_LAMBERT = 0x00000001u;
+const uint MAT_METAL = 0x00000002u;
+const uint MAT_DIELECRIC = 0x00000003u;
+const uint NUM_SPHERES = 5;
+
+const float TMIN = 1e-8f;
+const float TMAX = 1000.0f;
+
+uniform struct Camera {
+	vec3 lower_left;
+	vec3 horz;
+	vec3 vert;
+	vec3 origin;
+	float lens_radius;
+} cam;
+uniform int iteration;
+uniform float time;
+uniform int seed;
 
 struct Ray {
 	vec3 A;
@@ -16,77 +39,64 @@ struct Sphere {
 	float R;
 };
 
-vec4 color(Ray r);
-
-struct Camera {
-	vec3 lower_left;
-	vec3 horz;
-	vec3 vert;
-	vec3 origin;
+struct Material {
+	vec3 albedo;
+	uint type;
+	float roughness;
 };
 
-Ray GetRay(Camera cam, float x, float y);
+Sphere sph[] = {
+	{vec3(0,0,-1), 0.5f},
+	{vec3(0,-1000.5,-1), 1000.0f},
+	{vec3(1,0,-1), 0.5f},
+	{vec3(-1,0,-1), 0.5f},
+	{vec3(-1,0,-1), 0.49f}
+};
 
-uint rng_state;
-uint wang_hash(uint seed)
-{
-    seed = (seed ^ 61) ^ (seed >> 16);
-    seed *= 9;
-    seed = seed ^ (seed >> 4);
-    seed *= 0x27d4eb2d;
-    seed = seed ^ (seed >> 15);
-    return seed;
-}
-
-const float inv_int_max = (1.0f/4294967296.0);
-
-uint rand_xorshift()
-{
-    // Xorshift algorithm from George Marsaglia's paper
-    rng_state ^= (rng_state << 13);
-    rng_state ^= (rng_state >> 17);
-    rng_state ^= (rng_state << 5);
-    return rng_state;
-}
-//
-//uint rand_lcg()
-//{
-//    // LCG values from Numerical Recipes
-//    rng_state = 1664525 * rng_state + 1013904223;
-//    return rng_state;
-//}
-//
-float rng() {
-	return rand_xorshift() * inv_int_max;
-}
+Material mat[] = {
+	{vec3(0.1f, 0.2f, 0.5f), MAT_LAMBERT, 1.0f},
+	{vec3(0.9f), MAT_LAMBERT, 0.0f},
+	{vec3(0.8f, 0.6f, 0.2f), MAT_METAL, 0.5f},
+	{vec3(1.0f, 1.0f, 1.0f), MAT_DIELECRIC, 1.5f},
+	{vec3(0.8f, 0.0f, 0.0f), MAT_LAMBERT, 1.5f}
+};
 
 vec3 RandomInUnitSphere();
+vec2 RandomInUnitDisk();
+vec4 Color(Ray r);
+Ray GetRay(Camera cam, float x, float y);
+float rng();
+void rngseed(uint seed);
+uint rngstate();
+uint wang_hash(uint seed);
 
 void main() {
 
 	ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
 	ivec2 dims = imageSize(img_output);
 
-	rng_state = wang_hash(0x1603AB + wang_hash(gl_GlobalInvocationID.x + wang_hash(gl_GlobalInvocationID.y)));
-	
-	Camera cam;
-	cam.lower_left = vec3(-2.0f, -1.0f, -1.0f);
-	cam.horz = vec3(4.0f, 0.0f, 0.0f);
-	cam.vert = vec3(0.0f, 2.0f, 0.0f);
-	cam.origin = vec3(0.0f);
+	vec4 img = imageLoad(img_output, pixel_coords);
 
-	vec4 pixel = vec4(0.0f);
-	for (int i = 0; i < NUM_SAMPLES; i++) {
-		float x = (pixel_coords.x + rng())/float(dims.x);
-		float y = (pixel_coords.y + rng())/float(dims.y);
-		Ray r = GetRay(cam, x, y);
-		pixel += color(r);
-	}
+	if (iteration == 0)
+		rngseed(wang_hash(seed*state[pixel_coords.y * dims.x + pixel_coords.x] + wang_hash(gl_GlobalInvocationID.x * wang_hash(uint(time))) + gl_GlobalInvocationID.y + wang_hash(iteration)));
+	else
+		rngseed(state[pixel_coords.y * dims.x + pixel_coords.x]);
 
-	pixel /= NUM_SAMPLES;
+	float x = (pixel_coords.x + rng())/float(dims.x);
+	float y = (pixel_coords.y + rng())/float(dims.y);
+	Ray r = GetRay(cam, x, y);
+	vec4 pixel = (Color(r)+ iteration * img)*(1.0f/(1.0f + iteration));
 
 	imageStore(img_output, pixel_coords, pixel);
+	state[pixel_coords.y * dims.x + pixel_coords.x] = rngstate();
 
+}
+
+Ray GetRay(Camera cam, float x, float y)  {
+	vec2 rd = cam.lens_radius * RandomInUnitDisk();
+	vec3 offset = normalize(cam.horz) * rd.x + normalize(cam.vert) * rd.y;
+	Ray r = {cam.origin + offset, (cam.lower_left + x*cam.horz + y*cam.vert - offset - cam.origin)};
+	return r;
 }
 
 struct HitInfo {
@@ -94,46 +104,134 @@ struct HitInfo {
 	vec3 hitpoint;
 	float t;
 	vec3 normal;
+	Ray r;		// Incident while input to scatter, replaced by scattered on exit
+	Material m;
 };
 
-HitInfo hit_sphere(Sphere s, Ray r);
-
-#define NUM_SPHERES 2
-Sphere sph[] = {
-	{vec3(0,0,-1), 0.5f},
-	{vec3(0,-1000.5,-1), 1000.0f}
-};
-
-Ray GetRay(Camera cam, float x, float y)  {
-	Ray r = {cam.origin, (cam.lower_left + x*cam.horz + y*cam.vert)};
-	return r;
+vec3 ScatterLambert(inout HitInfo hit) {
+	hit.r.A = hit.hitpoint;
+	hit.r.B = hit.normal + RandomInUnitSphere();
+	hit.hit = dot(hit.r.B,hit.normal) > 0.0f;
+	return (hit.hit) ? hit.m.albedo : vec3(0.0f);
 }
 
-HitInfo WorldHit(Ray r) {
+vec3 custom_reflect(vec3 I, vec3 N) {
+	return (I - 2 * dot(I, normalize(N)) * normalize(N));
+}
+
+vec3 ScatterMetal(inout HitInfo hit) {
+	hit.r.A = hit.hitpoint;
+	hit.r.B = custom_reflect(hit.r.B,hit.normal) + 0.2f * RandomInUnitSphere() * hit.m.roughness;
+	hit.hit = dot(hit.r.B,hit.normal) > 0.0f;
+	return (hit.hit) ? hit.m.albedo : vec3(0.0f);
+}
+
+float schlick(float cosine, float ri) {
+	float r0 = (1.0f-ri)/(1.0f+ri);
+	r0 = r0*r0;
+	float anticos = (1.0f-cosine);
+	return r0 + (1.0f - r0)*anticos*anticos*anticos*anticos*anticos;
+}
+
+vec3 refract_dielectric(vec3 v, vec3 norm, float nu, float refl_prob) {
+	
+	vec3 uv = normalize(v);
+	float dt = dot(uv,norm);
+	float disc = 1.0f - nu*nu*(1.0f-dt*dt);
+	if (disc > 0.0f && rng() > refl_prob) {
+		return nu*(uv - norm*dt) - norm*sqrt(disc);
+	} else {
+		return custom_reflect(uv, norm);
+	}
+}
+
+vec3 ScatterDielectric(inout HitInfo hit) {
+
+	vec3 norm;
+	float nu;
+	float cosine;
+	if (dot(hit.normal, hit.r.B) > 0) {
+		norm = -hit.normal;
+		nu = hit.m.roughness;
+		cosine = hit.m.roughness * dot(normalize(hit.r.B), hit.normal);
+	} else {
+		norm = hit.normal;
+		nu = 1.0f/hit.m.roughness;
+		cosine = -dot(normalize(hit.r.B), hit.normal);
+	}
+
+	float ref_prob = schlick(cosine, hit.m.roughness);
+
+	hit.r.A = hit.hitpoint;
+	hit.r.B = refract_dielectric(hit.r.B, norm, nu, ref_prob);
+
+	return hit.m.albedo;
+}
+
+vec3 Scatter(inout HitInfo hit) {
+
+	if (hit.m.type == MAT_LAMBERT) {
+		return ScatterLambert(hit);
+	} else if (hit.m.type == MAT_METAL) {
+		return ScatterMetal(hit);
+	} else if (hit.m.type == MAT_DIELECRIC) {
+		return ScatterDielectric(hit);
+	} else {
+		return ScatterLambert(hit);
+	}
+}
+
+HitInfo HitSphere(Sphere s, Ray r, float tmin) {
+	vec3 oc = r.A - s.C;
+	float a = dot(r.B, r.B);
+	float b = 2.0f * dot(oc, r.B);
+	float c = dot(oc, oc) - s.R*s.R;
+	float disc = b*b - 4*a*c;
+	HitInfo h;
+	h.hit = (disc > 0.0f);
+	if (!h.hit) {
+		return h;
+	}
+	float t1 = (-b - sqrt(disc))/(2.0f*a);
+	if (t1 < tmin) {
+		t1 = (-b + sqrt(disc))/(2.0f*a);
+		if (t1 < tmin) {
+			h.t = t1;
+			h.hit = false;
+			return h;
+		}
+	}
+	h.t = t1;
+	h.hitpoint = r.A + h.t * r.B;
+	h.normal = (h.hitpoint - s.C)/s.R;
+	return h;
+}
+
+HitInfo WorldHit(Ray r, float tmin, float tmax) {
 	HitInfo hmin;
 	hmin.hit = false;
-	hmin.t = 1000.0f;
+	hmin.t = tmax;
 	for (int i = 0; i < NUM_SPHERES; i++) {
-		HitInfo h = hit_sphere(sph[i],r);
+		HitInfo h = HitSphere(sph[i],r, tmin);
 		if (h.hit) {
-			if (hmin.t > h.t && h.t > 0.00001f) {
+			if (hmin.t > h.t) {
 				hmin = h;
+				hmin.m = mat[i];
 			}
 		}
 	}
+	hmin.r = r;
 	return hmin;
 }
 
-vec4 color(Ray r) {
-
+vec4 Color(Ray r) {
 	vec3 color = vec3(1.0f);
-	
 	for (int depth = 0; depth < MAX_DEPTH; depth++) {
-		HitInfo h = WorldHit(r);
+		HitInfo h = WorldHit(r, 0.001f, 1000.0f);
 		if (h.hit) {
-			color *= vec3(0.5f);
-			r.A = h.hitpoint;
-			r.B = RandomInUnitSphere() + h.normal;
+			color *= Scatter(h);
+			if (!h.hit) break;
+			r = h.r;
 		} 
 		else {
 			float t = 0.5f * (normalize(r.B).y + 1.0f);
@@ -144,32 +242,68 @@ vec4 color(Ray r) {
 	return vec4(color, 1.0f);
 }
 
-HitInfo hit_sphere(Sphere s, Ray r) {
-	vec3 oc = r.A - s.C;
-	float a = dot(r.B, r.B);
-	float b = 2.0f * dot(oc, r.B);
-	float c = dot(oc, oc) - s.R*s.R;
-	float disc = b*b - 4*a*c;
-	HitInfo h;
-	h.hit = (disc >= 0.0f);
-	if (!h.hit) {
-		return h;
-	}
-	h.t = (-b - sqrt(disc))/(2.0f*a);
-	if (h.t < 0.0f) {
-		h.hit = false;
-		return h;
-	}
-	h.hitpoint = r.A + h.t * r.B;
-	h.normal = normalize(h.hitpoint - s.C);
-	return h;
-}
-
 vec3 RandomInUnitSphere() {
 	vec3 point = vec3(1.0f);
+	float attn = 1.0f;
 	do {
-		point = vec3(rng(),rng(),rng());
+		point = vec3(2.0f*rng()-1.0f,2.0f*rng()-1.0f,2.0f*rng()-1.0f);
+		point *= attn;
+		attn *= 0.99f;	// attenuating radius so that the distribution eventually lies inside the sphere. Avoid inf loop.
 	} while (length(point) >= 1.0f);
 
 	return point;
 }
+
+vec2 RandomInUnitDisk() {
+	vec2 point = vec2(1.0f);
+	float attn = 1.0f;
+	do {
+		point = vec2(2.0f*rng()-1.0f,2.0f*rng()-1.0f);
+		point *= attn;
+		attn *= 0.99f;	// attenuating radius so that the distribution eventually lies inside the sphere. Avoid inf loop.
+	} while (length(point) >= 1.0f);
+
+	return point;
+}
+
+
+uint wang_hash(uint seed)
+{	
+	seed = (seed ^ 61) ^ (seed >> 16); 
+	seed *= 9;
+    seed = seed ^ (seed >> 4);
+    seed *= 0x27d4eb2d;
+    seed = seed ^ (seed >> 15);
+    return seed;
+}
+
+uint rng_state;
+
+uint rngstate() {
+	return rng_state;
+}
+
+void rngseed(uint seed) {
+	rng_state = seed;
+}
+
+uint rand_lcg()
+{
+    // LCG values from Numerical Recipes
+    rng_state = 1664525 * rng_state + 1013904223;
+    return rng_state;
+}
+
+// Not Being used.
+uint rand_xor()
+{
+	rng_state ^= (rng_state << 13);
+	rng_state ^= (rng_state >> 17);
+	rng_state ^= (rng_state << 5);
+	return rng_state;
+}
+
+float rng() {
+	return rand_xor() * INV_INT_MAX;
+}
+

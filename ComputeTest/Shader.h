@@ -1,7 +1,4 @@
-
-
-#ifndef SHADER_H
-#define SHADER_H
+#pragma once
 
 #include <glad/glad.h>
 
@@ -236,15 +233,18 @@ public:
 	template <int N>
 	void setVector(const std::string &name, const glm::vec<N, float, glm::packed_highp>& vec)
 	{
+		if (glGetUniformLocation(ID, name.c_str()) < 0) {
+			std::cout << "OH FUCK " << name << " doesn't exist!" << std::endl;
+		}
 		switch (N) {
 		case 2: {
-			glUniform2fv(glGetUniformLocation(ID, name.c_str()), vec.length(), glm::value_ptr(vec));
+			glUniform2fv(glGetUniformLocation(ID, name.c_str()), 1, glm::value_ptr(vec));
 		}; break;
 		case 3: {
-			glUniform3fv(glGetUniformLocation(ID, name.c_str()), vec.length(), glm::value_ptr(vec));
+			glUniform3fv(glGetUniformLocation(ID, name.c_str()), 1, glm::value_ptr(vec));
 		}; break;
 		case 4: {
-			glUniform4fv(glGetUniformLocation(ID, name.c_str()), vec.length(), glm::value_ptr(vec));
+			glUniform4fv(glGetUniformLocation(ID, name.c_str()), 1, glm::value_ptr(vec));
 		}; break;
 		}
 	}
@@ -254,13 +254,13 @@ public:
 	{
 		switch (N) {
 		case 2: {
-			glUniformMatrix2fv(glGetUniformLocation(ID, name.c_str()), vec.length(), GL_FALSE, glm::value_ptr(vec));
+			glUniformMatrix2fv(glGetUniformLocation(ID, name.c_str()), 1, GL_FALSE, glm::value_ptr(vec));
 		}; break;
 		case 3: {
-			glUniformMatrix3fv(glGetUniformLocation(ID, name.c_str()), vec.length(), GL_FALSE, glm::value_ptr(vec));
+			glUniformMatrix3fv(glGetUniformLocation(ID, name.c_str()), 1, GL_FALSE, glm::value_ptr(vec));
 		}; break;
 		case 4: {
-			glUniformMatrix4fv(glGetUniformLocation(ID, name.c_str()), vec.length(), GL_FALSE, glm::value_ptr(vec));
+			glUniformMatrix4fv(glGetUniformLocation(ID, name.c_str()), 1, GL_FALSE, glm::value_ptr(vec));
 		}; break;
 		}
 	}
@@ -292,6 +292,3 @@ private:
 		}
 	}
 };
-
-#endif
-
