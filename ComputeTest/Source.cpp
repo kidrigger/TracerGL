@@ -116,12 +116,13 @@ int main() {
 
 	bool wait_after_quit = false;
 
+	double start = glfwGetTime();
 	while (!glfwWindowShouldClose(window)) {
 
 		{
 			compshdr.use();
 			compshdr.setInt("iteration",iteration++);
-			compshdr.setFloat("time", glfwGetTime());
+			compshdr.setFloat("time", (float)glfwGetTime());
 			compshdr.setInt("seed", rand());
 			glDispatchCompute((GLuint)TEX_W, (GLuint)TEX_H, 1);
 		}
@@ -145,8 +146,10 @@ int main() {
 			}
 		}
 		glfwSwapBuffers(window);
+		std::cout << "Number of iterations: " << iteration << " FPS: " << iteration/(glfwGetTime() - start) << "\t\r";
 		
 	}
+	std::cout << std::endl;
 
 	glDeleteBuffers(1, &VBO);
 	glDeleteBuffers(1, &SSBO);
