@@ -1,19 +1,37 @@
 #version 440 core
 
+struct Sphere {
+	vec3 C;
+	float R;
+};
+
+struct Material {
+	vec3 albedo;
+	float roughness;
+	uint type;
+};
+
+struct InputSphere {
+	Sphere S;
+	Material M;
+};
+
 // Layouts
 layout(local_size_x = 1, local_size_y = 1) in;
 layout(rgba32f, binding=0) uniform image2D img_output;
 layout (std430, binding=1) buffer rngstatebuf {
 	uint state[];
 };
+layout (std430, binding=2) readonly buffer objbuf {
+	InputSphere input_obj[];
+};
 
 // Constants
-const int MAX_DEPTH = 25;
+const int MAX_DEPTH = 10;
 const float INV_INT_MAX = (1.0f/4294967296.0);
 const uint MAT_LAMBERT = 0x00000001u;
 const uint MAT_METAL = 0x00000002u;
 const uint MAT_DIELECRIC = 0x00000003u;
-const uint NUM_SPHERES = 5;
 
 const float TMIN = 1e-8f;
 const float TMAX = 1000.0f;
@@ -27,22 +45,10 @@ uniform struct Camera {
 } cam;
 uniform int iteration;
 uniform float time;
-uniform int seed;
 
 struct Ray {
 	vec3 A;
 	vec3 B;
-};
-
-struct Sphere {
-	vec3 C;
-	float R;
-};
-
-struct Material {
-	vec3 albedo;
-	uint type;
-	float roughness;
 };
 
 Sphere sph[] = {
@@ -54,11 +60,11 @@ Sphere sph[] = {
 };
 
 Material mat[] = {
-	{vec3(0.1f, 0.2f, 0.5f), MAT_LAMBERT, 1.0f},
-	{vec3(0.9f), MAT_LAMBERT, 0.0f},
-	{vec3(0.8f, 0.6f, 0.2f), MAT_METAL, 0.5f},
-	{vec3(1.0f, 1.0f, 1.0f), MAT_DIELECRIC, 1.5f},
-	{vec3(0.8f, 0.0f, 0.0f), MAT_LAMBERT, 1.5f}
+	{vec3(0.1f, 0.2f, 0.5f), 1.0f, MAT_LAMBERT},
+	{vec3(0.9f), 0.0f, MAT_LAMBERT},
+	{vec3(0.8f, 0.6f, 0.2f), 0.5f, MAT_METAL},
+	{vec3(1.0f, 1.0f, 1.0f), 1.5f, MAT_DIELECRIC},
+	{vec3(0.8f, 0.0f, 0.0f), 1.5f, MAT_LAMBERT}
 };
 
 vec3 RandomInUnitSphere();
@@ -78,7 +84,7 @@ void main() {
 	vec4 img = imageLoad(img_output, pixel_coords);
 
 	if (iteration == 0)
-		rngseed(wang_hash(seed*state[pixel_coords.y * dims.x + pixel_coords.x] + wang_hash(gl_GlobalInvocationID.x * wang_hash(uint(time))) + gl_GlobalInvocationID.y + wang_hash(iteration)));
+		rngseed(wang_hash(state[pixel_coords.y * dims.x + pixel_coords.x] + wang_hash(gl_GlobalInvocationID.x * wang_hash(uint(time))) + gl_GlobalInvocationID.y + wang_hash(iteration)));
 	else
 		rngseed(state[pixel_coords.y * dims.x + pixel_coords.x]);
 
@@ -121,7 +127,7 @@ vec3 custom_reflect(vec3 I, vec3 N) {
 
 vec3 ScatterMetal(inout HitInfo hit) {
 	hit.r.A = hit.hitpoint;
-	hit.r.B = custom_reflect(hit.r.B,hit.normal) + 0.2f * RandomInUnitSphere() * hit.m.roughness;
+	hit.r.B = normalize(custom_reflect(hit.r.B,hit.normal)) + 0.2f * RandomInUnitSphere() * hit.m.roughness;
 	hit.hit = dot(hit.r.B,hit.normal) > 0.0f;
 	return (hit.hit) ? hit.m.albedo : vec3(0.0f);
 }
@@ -211,12 +217,22 @@ HitInfo WorldHit(Ray r, float tmin, float tmax) {
 	HitInfo hmin;
 	hmin.hit = false;
 	hmin.t = tmax;
-	for (int i = 0; i < NUM_SPHERES; i++) {
-		HitInfo h = HitSphere(sph[i],r, tmin);
+//	for (int i = 0; i < NUM_SPHERES; i++) {
+//		HitInfo h = HitSphere(sph[i],r, tmin);
+//		if (h.hit) {
+//			if (hmin.t > h.t) {
+//				hmin = h;
+//				hmin.m = mat[i];
+//			}
+//		}
+//	}
+	int n = input_obj.length();
+	for (int i = 0; i < n; i++) {
+		HitInfo h = HitSphere(input_obj[i].S, r, tmin);
 		if (h.hit) {
 			if (hmin.t > h.t) {
 				hmin = h;
-				hmin.m = mat[i];
+				hmin.m = input_obj[i].M;
 			}
 		}
 	}

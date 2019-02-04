@@ -133,6 +133,7 @@
     <ClInclude Include="GLFW\glfw3.h" />
     <ClInclude Include="GLFW\glfw3native.h" />
     <ClInclude Include="Shader.h" />
+    <ClInclude Include="ShaderStructs.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="fDraw.frag" />
