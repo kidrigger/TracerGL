@@ -125,6 +125,7 @@
     <ClCompile Include="glad\glad.c" />
     <ClCompile Include="Shader.cpp" />
     <ClCompile Include="Source.cpp" />
+    <ClCompile Include="stbi\stb_image.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Camera.h" />
@@ -134,11 +135,20 @@
     <ClInclude Include="GLFW\glfw3native.h" />
     <ClInclude Include="Shader.h" />
     <ClInclude Include="ShaderStructs.h" />
+    <ClInclude Include="stbi\stb_image.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="fDraw.frag" />
     <None Include="raycompute.comp" />
     <None Include="vDraw.vert" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="skybox\back.jpg" />
+    <Image Include="skybox\bottom.jpg" />
+    <Image Include="skybox\front.jpg" />
+    <Image Include="skybox\left.jpg" />
+    <Image Include="skybox\right.jpg" />
+    <Image Include="skybox\top.jpg" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -19,6 +19,9 @@
     <Filter Include="glfw">
       <UniqueIdentifier>{9df1afb7-a00b-461b-93da-26c1312069b5}</UniqueIdentifier>
     </Filter>
+    <Filter Include="stbi">
+      <UniqueIdentifier>{63c6ea7e-3925-4a3e-9d78-9968a1c37236}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Source.cpp">
@@ -32,6 +35,9 @@
     </ClCompile>
     <ClCompile Include="Camera.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="stbi\stb_image.cpp">
+      <Filter>stbi</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -56,6 +62,9 @@
     <ClInclude Include="ShaderStructs.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="stbi\stb_image.h">
+      <Filter>stbi</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="raycompute.comp">
@@ -67,5 +76,25 @@
     <None Include="fDraw.frag">
       <Filter>Resource Files</Filter>
     </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="skybox\back.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="skybox\bottom.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="skybox\front.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="skybox\left.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="skybox\right.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="skybox\top.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
   </ItemGroup>
 </Project>

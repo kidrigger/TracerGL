@@ -120,6 +120,22 @@ public:
 	}
 
 	template <int N>
+	void setVector(const std::string &name, const glm::vec<N, int, glm::packed_highp>& vec)
+	{
+		switch (N) {
+		case 2: {
+			glUniform2iv(glGetUniformLocation(ID, name.c_str()), vec);
+		}; break;
+		case 3: {
+			glUniform3iv(glGetUniformLocation(ID, name.c_str()), vec);
+		}; break;
+		case 4: {
+			glUniform4iv(glGetUniformLocation(ID, name.c_str()), vec);
+		}; break;
+		}
+	}
+
+	template <int N>
 	void setMatrix(const std::string &name, const glm::mat<N, N, float, glm::packed_highp>& vec)
 	{
 		switch (N) {
@@ -245,6 +261,22 @@ public:
 		}; break;
 		case 4: {
 			glUniform4fv(glGetUniformLocation(ID, name.c_str()), 1, glm::value_ptr(vec));
+		}; break;
+		}
+	}
+
+	template <int N>
+	void setVector(const std::string &name, const glm::vec<N, int, glm::packed_highp>& vec)
+	{
+		switch (N) {
+		case 2: {
+			glUniform2iv(glGetUniformLocation(ID, name.c_str()), 1, glm::value_ptr(vec));
+		}; break;
+		case 3: {
+			glUniform3iv(glGetUniformLocation(ID, name.c_str()), 1, glm::value_ptr(vec));
+		}; break;
+		case 4: {
+			glUniform4iv(glGetUniformLocation(ID, name.c_str()), 1, glm::value_ptr(vec));
 		}; break;
 		}
 	}

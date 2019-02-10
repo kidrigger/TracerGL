@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 
 struct Sphere {
 	vec3 C;
@@ -25,6 +25,7 @@ layout (std430, binding=1) buffer rngstatebuf {
 layout (std430, binding=2) readonly buffer objbuf {
 	InputSphere input_obj[];
 };
+layout (rgba8, binding=3) readonly uniform imageCube sky;
 
 // Constants
 const int MAX_DEPTH = 10;
@@ -45,26 +46,12 @@ uniform struct Camera {
 } cam;
 uniform int iteration;
 uniform float time;
+uniform ivec2 chunk;
+uniform ivec2 chunk_offset;
 
 struct Ray {
 	vec3 A;
 	vec3 B;
-};
-
-Sphere sph[] = {
-	{vec3(0,0,-1), 0.5f},
-	{vec3(0,-1000.5,-1), 1000.0f},
-	{vec3(1,0,-1), 0.5f},
-	{vec3(-1,0,-1), 0.5f},
-	{vec3(-1,0,-1), 0.49f}
-};
-
-Material mat[] = {
-	{vec3(0.1f, 0.2f, 0.5f), 1.0f, MAT_LAMBERT},
-	{vec3(0.9f), 0.0f, MAT_LAMBERT},
-	{vec3(0.8f, 0.6f, 0.2f), 0.5f, MAT_METAL},
-	{vec3(1.0f, 1.0f, 1.0f), 1.5f, MAT_DIELECRIC},
-	{vec3(0.8f, 0.0f, 0.0f), 1.5f, MAT_LAMBERT}
 };
 
 vec3 RandomInUnitSphere();
@@ -74,19 +61,17 @@ Ray GetRay(Camera cam, float x, float y);
 float rng();
 void rngseed(uint seed);
 uint rngstate();
-uint wang_hash(uint seed);
+//uint wang_hash(uint seed);
 
 void main() {
 
-	ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
+	ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy) + chunk;
 	ivec2 dims = imageSize(img_output);
+	ivec2 skysize = imageSize(sky);
 
 	vec4 img = imageLoad(img_output, pixel_coords);
 
-	if (iteration == 0)
-		rngseed(wang_hash(state[pixel_coords.y * dims.x + pixel_coords.x] + wang_hash(gl_GlobalInvocationID.x * wang_hash(uint(time))) + gl_GlobalInvocationID.y + wang_hash(iteration)));
-	else
-		rngseed(state[pixel_coords.y * dims.x + pixel_coords.x]);
+	rngseed(state[pixel_coords.y * dims.x + pixel_coords.x]);
 
 	float x = (pixel_coords.x + rng())/float(dims.x);
 	float y = (pixel_coords.y + rng())/float(dims.y);
@@ -217,15 +202,6 @@ HitInfo WorldHit(Ray r, float tmin, float tmax) {
 	HitInfo hmin;
 	hmin.hit = false;
 	hmin.t = tmax;
-//	for (int i = 0; i < NUM_SPHERES; i++) {
-//		HitInfo h = HitSphere(sph[i],r, tmin);
-//		if (h.hit) {
-//			if (hmin.t > h.t) {
-//				hmin = h;
-//				hmin.m = mat[i];
-//			}
-//		}
-//	}
 	int n = input_obj.length();
 	for (int i = 0; i < n; i++) {
 		HitInfo h = HitSphere(input_obj[i].S, r, tmin);
@@ -240,6 +216,55 @@ HitInfo WorldHit(Ray r, float tmin, float tmax) {
 	return hmin;
 }
 
+vec3 skyboxSample(vec3 coord) {
+	// MA can be 0,1,2,3,4,5
+	int MA;
+	vec3 sctcma;
+	vec3 absc = abs(coord);
+	if (absc.x > absc.y) {
+		if (absc.x > absc.z) {
+			if (coord.x < 0) {
+				MA = 1;
+				sctcma = vec3( coord.z, -coord.y, 1.0f/abs(coord.x));
+			} else {
+				MA = 0;
+				sctcma = vec3(-coord.z, -coord.y, 1.0f/abs(coord.x));
+			}
+		} else {
+			if (coord.z < 0) {
+				MA = 5;
+				sctcma = vec3(-coord.x, -coord.y, 1.0f/abs(coord.z));
+			} else {
+				MA = 4;
+				sctcma = vec3( coord.x, -coord.y, 1.0f/abs(coord.z));
+			}
+		}
+	} else {
+		if (absc.y > absc.z) {
+			if (coord.y < 0) {
+				MA = 3;
+				sctcma = vec3(coord.x, -coord.z, 1.0f/abs(coord.y));
+			} else {
+				MA = 2;
+				sctcma = vec3(coord.x, coord.z, 1.0f/abs(coord.y));
+			}
+		} else {
+			if (coord.z < 0) {
+				MA = 5;
+				sctcma = vec3(-coord.x, -coord.y, 1.0f/abs(coord.z));
+			} else {
+				MA = 4;
+				sctcma = vec3( coord.x, -coord.y, 1.0f/abs(coord.z));
+			}
+		}
+	}
+
+	ivec2 imgSize = imageSize(sky);
+	ivec3 texco = ivec3(0.5f * (sctcma.x * sctcma.z + 1) * imgSize.x, 0.5f * (sctcma.y * sctcma.z + 1) * imgSize.y, MA);
+
+	return imageLoad(sky, texco).rgb;
+}
+
 vec4 Color(Ray r) {
 	vec3 color = vec3(1.0f);
 	for (int depth = 0; depth < MAX_DEPTH; depth++) {
@@ -251,7 +276,7 @@ vec4 Color(Ray r) {
 		} 
 		else {
 			float t = 0.5f * (normalize(r.B).y + 1.0f);
-			color*= ((1.0f-t)*vec3(1.0f) + t * vec3(0.5f, 0.7f, 1.0f));
+			color *= skyboxSample(r.B);
 			break;
 		}
 	}
@@ -260,11 +285,9 @@ vec4 Color(Ray r) {
 
 vec3 RandomInUnitSphere() {
 	vec3 point = vec3(1.0f);
-	float attn = 1.0f;
 	do {
 		point = vec3(2.0f*rng()-1.0f,2.0f*rng()-1.0f,2.0f*rng()-1.0f);
-		point *= attn;
-		attn *= 0.99f;	// attenuating radius so that the distribution eventually lies inside the sphere. Avoid inf loop.
+		// attenuating radius so that the distribution eventually lies inside the sphere. Avoid inf loop.
 	} while (length(point) >= 1.0f);
 
 	return point;
@@ -272,26 +295,23 @@ vec3 RandomInUnitSphere() {
 
 vec2 RandomInUnitDisk() {
 	vec2 point = vec2(1.0f);
-	float attn = 1.0f;
 	do {
 		point = vec2(2.0f*rng()-1.0f,2.0f*rng()-1.0f);
-		point *= attn;
-		attn *= 0.99f;	// attenuating radius so that the distribution eventually lies inside the sphere. Avoid inf loop.
 	} while (length(point) >= 1.0f);
 
 	return point;
 }
 
 
-uint wang_hash(uint seed)
-{	
-	seed = (seed ^ 61) ^ (seed >> 16); 
-	seed *= 9;
-    seed = seed ^ (seed >> 4);
-    seed *= 0x27d4eb2d;
-    seed = seed ^ (seed >> 15);
-    return seed;
-}
+//uint wang_hash(uint seed)
+//{	
+//	seed = (seed ^ 61) ^ (seed >> 16); 
+//	seed *= 9;
+//    seed = seed ^ (seed >> 4);
+//    seed *= 0x27d4eb2d;
+//    seed = seed ^ (seed >> 15);
+//    return seed;
+//}
 
 uint rng_state;
 
@@ -303,14 +323,13 @@ void rngseed(uint seed) {
 	rng_state = seed;
 }
 
-uint rand_lcg()
-{
-    // LCG values from Numerical Recipes
-    rng_state = 1664525 * rng_state + 1013904223;
-    return rng_state;
-}
+//uint rand_lcg()
+//{
+//    // LCG values from Numerical Recipes
+//    rng_state = 1664525 * rng_state + 1013904223;
+//    return rng_state;
+//}
 
-// Not Being used.
 uint rand_xor()
 {
 	rng_state ^= (rng_state << 13);

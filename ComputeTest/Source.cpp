@@ -1,4 +1,4 @@
-#include <iostream>
+﻿#include <iostream>
 #include "glad/glad.h"
 
 #include "GLFW/glfw3.h"
@@ -7,7 +7,9 @@
 #include "Camera.h"
 #include "ShaderStructs.h"
 #include <random>
- 
+#include <iomanip>
+#include <stbi/stb_image.h>
+
 extern "C" {
 	_declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
 }
@@ -16,24 +18,32 @@ int main() {
 
 	GLFWwindow* window = nullptr;
 
-	const int WIDTH = 1920;
-	const int HEIGHT = 1080;
+	const int  WIDTH      = 1920;
+	const int  HEIGHT     = 1080;
+	const int CHUNKS_X	  = 2;
+	const int CHUNKS_Y	  = 2;
+	const bool FULLSCREEN = true;
 
 	if (!glfwInit()) {
 		std::cerr << "ERR::GLFW::INIT_FAIL" << std::endl;
-		std::cin.ignore();
+		std::cin.ignore(); 
 		return 1;
 	}
 
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 4);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 
-	GLFWmonitor* monitor = nullptr;
-	monitor = glfwGetPrimaryMonitor();
+	GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+	if (!monitor) {
+		std::cerr << "ERR::GLFW::NO_MONITOR" << std::endl;
+		glfwTerminate();
+		std::cin.ignore();
+		return 1;
+	}
 	const GLFWvidmode* mode = glfwGetVideoMode(monitor);
-	if (mode->height != HEIGHT || mode->width != WIDTH) {
+	if (!FULLSCREEN || mode->height != HEIGHT || mode->width != WIDTH) {
 		monitor = nullptr;
 	}
 
@@ -55,20 +65,6 @@ int main() {
 	}
 
 	std::cout << glGetString(GL_VENDOR) << ' ' << glGetString(GL_RENDERER) << std::endl;
-
-	// Creating the texture for the output from the raytracer.
-	const int TEX_W = WIDTH, TEX_H = HEIGHT;
-	GLuint tex_output;
-	glGenTextures(1, &tex_output);
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, tex_output);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, TEX_W, TEX_H, 0, GL_RGBA, GL_FLOAT, NULL);
-
-	glBindImageTexture(0, tex_output, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32F);
 
 	// Getting the work-group details from the GPU
 	int work_grp_cnt[3];
@@ -108,9 +104,58 @@ int main() {
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
 	glEnableVertexAttribArray(0);
 
+	// Creating the texture for the output from the raytracer.
+	const int TEX_W = WIDTH, TEX_H = HEIGHT;
+	GLuint tex_output;
+	glGenTextures(1, &tex_output);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, tex_output);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, TEX_W, TEX_H, 0, GL_RGBA, GL_FLOAT, NULL);
+
+	glBindImageTexture(0, tex_output, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32F);
+
+	// TextureCube Skybox
+	GLuint tex_sky;
+	glGenTextures(1, &tex_sky);
+	glActiveTexture(GL_TEXTURE3);
+	glBindTexture(GL_TEXTURE_CUBE_MAP, tex_sky);
+	{
+		std::string face_arr[] = {
+			"right.jpg",
+			"left.jpg",
+			"top.jpg",
+			"bottom.jpg",
+			"front.jpg",
+			"back.jpg"
+		};
+		int w, h, nrChannels;
+		for (int i = 0; i < 6; i++) {
+			uint8_t* data = stbi_load(("skybox/" + face_arr[i]).c_str(), &w, &h, &nrChannels, 0);
+			if (!data) {
+				std::cout << "HELL::FROZE" << std::endl;
+			}
+			if (nrChannels == 3)
+				glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGBA8, w, h, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+			if (nrChannels == 4)
+				glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+			stbi_image_free(data);
+		}
+		glTexStorage2D(GL_TEXTURE_CUBE_MAP, 0, GL_RGBA8, w, h);
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glBindImageTexture(3, tex_sky, 0, GL_TRUE, 0, GL_READ_ONLY, GL_RGBA8);
+	}
+
+	// SSBO for rng
 	std::default_random_engine rng;
 	std::uniform_int_distribution<uint32_t> distr;
-	// SSBO for rng
 	std::vector<GLuint> init_rng;
 	init_rng.resize(WIDTH * HEIGHT);
 	for (GLuint& i : init_rng) {
@@ -123,12 +168,11 @@ int main() {
 	glBufferData(GL_SHADER_STORAGE_BUFFER, init_rng.size() * sizeof(GLuint), init_rng.data(), GL_DYNAMIC_DRAW);
 
 	// SSBO for the spheres.
-	std::vector<Sphere> obj{ { {0, 0, 0}	, 0.5f	, {0.1f, 0.2f, 0.5f}, 1.0f, MaterialType::LAMBERTIAN},
+	std::vector<Sphere> obj{{ {0, 0, 0}		, 0.5f	, {0.1f, 0.2f, 0.5f}, 1.0f, MaterialType::LAMBERTIAN},
 							{ {0,-100.5,0}	, 100.0f, {0.9f, 0.9f, 0.9f}, 0.0f, MaterialType::LAMBERTIAN},
 							{ {1,0,0}		, 0.5f	, {0.8f, 0.6f, 0.2f}, 0.5f, MaterialType::METALLIC	},
 							{ {-1,0,0}		, 0.5f	, {1.0f, 1.0f, 1.0f}, 1.5f, MaterialType::DIELECTRIC},
 							{ {-1,0,0}		, -0.48f, {1.0f, 1.0f, 1.0f}, 1.5f, MaterialType::DIELECTRIC} };
-
 
 	const float rif = 0.5f / (float)INT_MAX;
 	int index = 1302;
@@ -156,26 +200,29 @@ int main() {
 	int iteration = 0;
 	bool wait_after_quit = false;
 	double start = glfwGetTime();
+	const int CHUNK_W = TEX_W / CHUNKS_X;
+	const int CHUNK_H = TEX_H / CHUNKS_Y;
+	const int N_CHUNKS = CHUNKS_X * CHUNKS_Y;
+	
+	// Chunks must divide the screen properly.
+	if (TEX_H%CHUNKS_Y != 0 || TEX_W % CHUNKS_X != 0) {
+		std::cout << "ERR::TEX_CHUNKS_INDIVISIBLE" << std::endl;
+		glfwSetWindowShouldClose(window, GLFW_TRUE);
+	}
 
+	double prev = start;
 	while (!glfwWindowShouldClose(window)) {
 
 		// Compute shader dispatch.
 		{
+			int chunk_x, chunk_y;
+			chunk_x = iteration%CHUNKS_X;
+			chunk_y = (iteration / CHUNKS_X) % CHUNKS_Y;
 			compshdr.use();
-			compshdr.setInt("iteration",iteration++);
+			compshdr.setInt("iteration", (iteration++/N_CHUNKS));
 			compshdr.setFloat("time", (float)glfwGetTime());
-			glDispatchCompute((GLuint)TEX_W, (GLuint)TEX_H, 1);
-		}
-
-		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-
-		{
-			glClear(GL_COLOR_BUFFER_BIT);
-			drawshdr.use();
-			glBindVertexArray(VAO);
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, tex_output);
-			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+			compshdr.setVector("chunk", glm::ivec2(chunk_x*CHUNK_W, chunk_y * CHUNK_H));
+			glDispatchCompute((GLuint)(TEX_W / CHUNKS_X), (GLuint)(TEX_H / CHUNKS_Y), 1);
 		}
 
 		glfwPollEvents();
@@ -185,13 +232,28 @@ int main() {
 				wait_after_quit = true;
 			}
 		}
+
+		// Rendering Code
+		{
+			glClear(GL_COLOR_BUFFER_BIT);
+			drawshdr.use();
+			glBindVertexArray(VAO);
+			glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+		}
 		glfwSwapBuffers(window);
-		std::cout << "Number of iterations: " << iteration << " FPS: " << iteration/(glfwGetTime() - start) << "\t\r";
-		
+
+		if (iteration%N_CHUNKS == 0) {
+
+			// Book keeping 
+			double time = glfwGetTime();
+			std::cout << "Number of iterations: " << std::setw(4) << iteration/N_CHUNKS << " FPS: " << std::setw(7) << iteration / (N_CHUNKS * (time - start)) << " Delta: " << std::setw(7) << time - prev << "\t\t\t\r";
+			prev = time;
+		}
 	}
 	std::cout << std::endl;
 
-
+	// Cleanup
 	glDeleteBuffers(1, &VBO);
 	glDeleteBuffers(1, &SSBO_rng);
 	glDeleteBuffers(1, &SSBO_objects);
