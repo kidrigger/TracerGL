@@ -1,18 +1,31 @@
 #version 450 core
 
-struct Sphere {
-	vec3 C;
-	float R;
+/*
+ * Shape class contains data from primitives like
+ * Sphere:
+ *   A : Center
+ *	 B : All components are radius
+ * Cuboid
+ *	 A : Corner
+ *	 B : Diagonal
+ */
+struct Shape {
+	vec3 A;
+	uint type;
+	vec3 B;
+	uint param;	// Rotation (cube) or axis (rect)
+	float density;
 };
 
 struct Material {
 	vec3 albedo;
-	float roughness;
+	float param;
+	vec3 emissive;
 	uint type;
 };
 
-struct InputSphere {
-	Sphere S;
+struct InputShape {
+	Shape S;
 	Material M;
 };
 
@@ -23,16 +36,31 @@ layout (std430, binding=1) buffer rngstatebuf {
 	uint state[];
 };
 layout (std430, binding=2) readonly buffer objbuf {
-	InputSphere input_obj[];
+	InputShape input_obj[];
 };
 layout (rgba8, binding=3) readonly uniform imageCube sky;
 
 // Constants
-const int MAX_DEPTH = 10;
-const float INV_INT_MAX = (1.0f/4294967296.0);
-const uint MAT_LAMBERT = 0x00000001u;
-const uint MAT_METAL = 0x00000002u;
+const int MAX_DEPTH = 25;
+const float INV_UINT_MAX = (1.0f/4294967296.0);
+
+// Enums
+// Material
+const uint MAT_LAMBERT	 = 0x00000001u;
+const uint MAT_METAL	 = 0x00000002u;
 const uint MAT_DIELECRIC = 0x00000003u;
+
+// Shape
+const uint SHP_SPHERE = 0x00000001u;
+const uint SHP_CUBOID = 0x00000002u;
+const uint SHP_RECT	  = 0x00000003u;
+const uint SHP_ISOTROPIC = 0xF0000000u;
+const uint SHP_PRIMITIVE_MASK = 0x0000FFFFu;
+const uint SHP_SECONDARY_MASK = 0xFFFF0000u;
+// Axis
+const uint AXIS_X = 0x00000000u;
+const uint AXIS_Y = 0x00000001u;
+const uint AXIS_Z = 0x00000002u;
 
 const float TMIN = 1e-8f;
 const float TMAX = 1000.0f;
@@ -48,6 +76,7 @@ uniform int iteration;
 uniform float time;
 uniform ivec2 chunk;
 uniform ivec2 chunk_offset;
+uniform bool skybox_active;
 
 struct Ray {
 	vec3 A;
@@ -77,6 +106,8 @@ void main() {
 	float y = (pixel_coords.y + rng())/float(dims.y);
 	Ray r = GetRay(cam, x, y);
 	vec4 pixel = (Color(r)+ iteration * img)*(1.0f/(1.0f + iteration));
+//	vec4 pixel = (vec4(rng()) + iteration*img)*(1.0f/(1.0f + iteration));
+//	vec4 pixel = vec4(state[pixel_coords.y * dims.x + pixel_coords.x]*INV_UINT_MAX);
 
 	imageStore(img_output, pixel_coords, pixel);
 	state[pixel_coords.y * dims.x + pixel_coords.x] = rngstate();
@@ -112,7 +143,7 @@ vec3 custom_reflect(vec3 I, vec3 N) {
 
 vec3 ScatterMetal(inout HitInfo hit) {
 	hit.r.A = hit.hitpoint;
-	hit.r.B = normalize(custom_reflect(hit.r.B,hit.normal)) + 0.2f * RandomInUnitSphere() * hit.m.roughness;
+	hit.r.B = normalize(custom_reflect(hit.r.B,hit.normal)) + 0.2f * RandomInUnitSphere() * hit.m.param;
 	hit.hit = dot(hit.r.B,hit.normal) > 0.0f;
 	return (hit.hit) ? hit.m.albedo : vec3(0.0f);
 }
@@ -143,19 +174,28 @@ vec3 ScatterDielectric(inout HitInfo hit) {
 	float cosine;
 	if (dot(hit.normal, hit.r.B) > 0) {
 		norm = -hit.normal;
-		nu = hit.m.roughness;
-		cosine = hit.m.roughness * dot(normalize(hit.r.B), hit.normal);
+		nu = hit.m.param;
+		cosine = hit.m.param * dot(normalize(hit.r.B), hit.normal);
 	} else {
 		norm = hit.normal;
-		nu = 1.0f/hit.m.roughness;
+		nu = 1.0f/hit.m.param;
 		cosine = -dot(normalize(hit.r.B), hit.normal);
 	}
 
-	float ref_prob = schlick(cosine, hit.m.roughness);
+	float ref_prob = schlick(cosine, hit.m.param);
 
 	hit.r.A = hit.hitpoint;
 	hit.r.B = refract_dielectric(hit.r.B, norm, nu, ref_prob);
 
+	return hit.m.albedo;
+}
+
+vec3 ScatterIso(inout HitInfo hit) {
+	float r = rng();
+
+	hit.r.A = hit.hitpoint;
+	hit.r.B = RandomInUnitSphere();
+	hit.hit = true;
 	return hit.m.albedo;
 }
 
@@ -168,34 +208,196 @@ vec3 Scatter(inout HitInfo hit) {
 	} else if (hit.m.type == MAT_DIELECRIC) {
 		return ScatterDielectric(hit);
 	} else {
-		return ScatterLambert(hit);
+		return ScatterIso(hit);
 	}
 }
 
-HitInfo HitSphere(Sphere s, Ray r, float tmin) {
-	vec3 oc = r.A - s.C;
+HitInfo HitSphere(Shape s, Ray r, float tmin) {
+	vec3 oc = r.A - s.A;
 	float a = dot(r.B, r.B);
 	float b = 2.0f * dot(oc, r.B);
-	float c = dot(oc, oc) - s.R*s.R;
+	float c = dot(oc, oc) - s.B.x*s.B.x;
 	float disc = b*b - 4*a*c;
 	HitInfo h;
 	h.hit = (disc > 0.0f);
 	if (!h.hit) {
 		return h;
 	}
-	float t1 = (-b - sqrt(disc))/(2.0f*a);
-	if (t1 < tmin) {
-		t1 = (-b + sqrt(disc))/(2.0f*a);
-		if (t1 < tmin) {
-			h.t = t1;
+	h.t = (-b - sqrt(disc))/(2.0f*a);
+	float t2 = (-b + sqrt(disc))/(2.0f*a);
+	if (h.t < tmin) {
+		h.t = t2;
+		if (h.t < tmin) {
 			h.hit = false;
 			return h;
 		}
 	}
-	h.t = t1;
-	h.hitpoint = r.A + h.t * r.B;
-	h.normal = (h.hitpoint - s.C)/s.R;
+
+	if ((s.type & SHP_SECONDARY_MASK) == SHP_ISOTROPIC) {
+		float d = abs(t2 - h.t) * length(r.B);
+		float hit_d = -(1.0f/s.density)*log(rng());
+		if (hit_d < d) {
+			h.t = h.t + (hit_d / length(r.B));
+			h.hitpoint = r.A + h.t*r.B;
+		} else {
+			h.hit = false;
+		}
+	} else {
+		h.hitpoint = r.A + h.t * r.B;
+		h.normal = (h.hitpoint - s.A)/s.B.x;
+	}
 	return h;
+}
+
+HitInfo HitRectXY(float sAx, float sAy, float sBx, float sBy, float z, Ray r, float normal) {
+	HitInfo h;
+	float t = (z - r.A.z)/r.B.z;
+	float x = r.A.x + r.B.x * t;
+	float y = r.A.y + r.B.y * t;
+	
+	if (x < sAx || x > sBx+sAx || y < sAy || y > sBy+sAy) {
+		h.hit = false;
+		h.t = t;
+		return h;
+	}
+
+	h.hit = true;
+	h.hitpoint = r.A + t*r.B;
+	h.normal = vec3(0,0,normal);
+	h.t = t;
+	return h;
+}
+
+HitInfo HitRectYZ(float sAy, float sAz, float sBy, float sBz, float x, Ray r, float normal) {
+	HitInfo h;
+	float t = (x - r.A.x)/r.B.x;
+	float z = r.A.z + r.B.z * t;
+	float y = r.A.y + r.B.y * t;
+	
+	if (z < sAz || z > sBz+sAz || y < sAy || y > sBy+sAy) {
+		h.hit = false;
+		h.t = t;
+		return h;
+	}
+
+	h.hit = true;
+	h.hitpoint = r.A + t*r.B;
+	h.normal = vec3(normal,0,0);
+	h.t = t;
+	return h;
+}
+
+HitInfo HitRectXZ(float sAx, float sAz, float sBx, float sBz, float y, Ray r, float normal) {
+	HitInfo h;
+	float t = (y - r.A.y)/r.B.y;
+	float z = r.A.z + r.B.z * t;
+	float x = r.A.x + r.B.x * t;
+	
+	if (z < sAz || z > sBz+sAz || x < sAx || x > sBx+sAx) {
+		h.hit = false;
+		h.t = t;
+		return h;
+	}
+
+	h.hit = true;
+	h.hitpoint = r.A + t*r.B;
+	h.normal = vec3(0,normal,0);
+	h.t = t;
+	return h;
+}
+
+vec3 rotateXZ(vec3 a, float angle) {
+	return vec3(cos(angle)*a.x - sin(angle)*a.z, a.y, sin(angle)*a.x + cos(angle)*a.z);
+}
+
+HitInfo HitCuboid(Shape s, Ray r, float tmin) {
+
+	// Can add s.param != 0
+	float theta = s.param/1000.0f;
+	vec3 center = (s.A + s.B)*0.5f;
+	vec3 A = center + rotateXZ(r.A-center, -theta);
+	vec3 B = center + rotateXZ(r.B + r.A - center, -theta) - A;
+
+	r = Ray(A,B);
+	HitInfo h;
+	HitInfo hmin;
+	HitInfo hmax;
+	h = HitRectXY(s.A.x, s.A.y, s.B.x, s.B.y, s.A.z, r, -1);
+	hmin = h;
+	hmax = h;
+	h = HitRectXY(s.A.x, s.A.y, s.B.x, s.B.y, s.A.z + s.B.z, r, 1);
+	if (h.hit && h.t < hmin.t) hmin = h;
+	if (h.hit && h.t > hmax.t) hmax = h;
+	h = HitRectYZ(s.A.y, s.A.z, s.B.y, s.B.z, s.A.x, r, -1);
+	if (h.hit && h.t < hmin.t) hmin = h;
+	if (h.hit && h.t > hmax.t) hmax = h;
+	h = HitRectYZ(s.A.y, s.A.z, s.B.y, s.B.z, s.A.x + s.B.x, r, 1);
+	if (h.hit && h.t < hmin.t) hmin = h;
+	if (h.hit && h.t > hmax.t) hmax = h;
+	h = HitRectXZ(s.A.x, s.A.z, s.B.x, s.B.z, s.A.y, r, -1);
+	if (h.hit && h.t < hmin.t) hmin = h;
+	if (h.hit && h.t > hmax.t) hmax = h;
+	h = HitRectXZ(s.A.x, s.A.z, s.B.x, s.B.z, s.A.y + s.B.y, r, 1);
+	if (h.hit && h.t < hmin.t) hmin = h;
+	if (h.hit && h.t > hmax.t) hmax = h;
+
+	h = hmin;
+	if (hmin.t < tmin) {
+		hmin = hmax;
+		hmax = h;
+	}
+	if (hmin.t < tmin) {
+		hmin.hit = false;
+		return hmin;
+	}
+
+	if ((s.type & SHP_SECONDARY_MASK) == SHP_ISOTROPIC) {
+		float d = abs(hmax.t - hmin.t) * length(r.B);
+		float hit_d = -(1.0f/s.density)*log(rng());
+		if (hit_d < d) {
+			hmin.t = hmin.t + (hit_d / length(r.B));
+			hmin.hitpoint = r.A + hmin.t*r.B;
+		} else {
+			hmin.hit = false;
+		}
+	} else {
+		hmin.normal = rotateXZ(hmin.normal, theta);
+		hmin.hitpoint = center + rotateXZ(hmin.hitpoint - center, theta);
+	}
+
+	return hmin;
+}
+
+HitInfo HitShape(Shape s, Ray r, float tmin) {
+	switch (s.type & SHP_PRIMITIVE_MASK) {
+		case SHP_SPHERE: {
+			return HitSphere(s,r,tmin);
+		}; break;
+		case SHP_CUBOID: {
+			return HitCuboid(s,r,tmin);
+		}; break;
+		case SHP_RECT: {
+			HitInfo h;
+			switch (s.param) {
+				case AXIS_X: {
+					h = HitRectYZ(s.A.y, s.A.z, s.B.y, s.B.z, s.A.x, r, sign(s.B.x));
+					if (h.t < tmin) h.hit = false;
+				}; break;
+				case AXIS_Y: {
+					h = HitRectXZ(s.A.x, s.A.z, s.B.x, s.B.z, s.A.y, r, sign(s.B.y));
+					if (h.t < tmin) h.hit = false;
+				}; break;
+				case AXIS_Z: {
+					h = HitRectXY(s.A.x, s.A.y, s.B.x, s.B.y, s.A.z, r, sign(s.B.z));
+					if (h.t < tmin) h.hit = false;
+				}; break;
+			}
+			return h;
+		}; break;
+		default: {
+			return HitSphere(s,r,tmin);
+		}; break;
+	}
 }
 
 HitInfo WorldHit(Ray r, float tmin, float tmax) {
@@ -204,7 +406,7 @@ HitInfo WorldHit(Ray r, float tmin, float tmax) {
 	hmin.t = tmax;
 	int n = input_obj.length();
 	for (int i = 0; i < n; i++) {
-		HitInfo h = HitSphere(input_obj[i].S, r, tmin);
+		HitInfo h = HitShape(input_obj[i].S, r, tmin);
 		if (h.hit) {
 			if (hmin.t > h.t) {
 				hmin = h;
@@ -266,21 +468,26 @@ vec3 skyboxSample(vec3 coord) {
 }
 
 vec4 Color(Ray r) {
-	vec3 color = vec3(1.0f);
-	for (int depth = 0; depth < MAX_DEPTH; depth++) {
+	vec3 A = vec3(0);
+	vec3 M = vec3(1);
+	int depth;
+	for (depth = 0; depth < MAX_DEPTH; depth++) {
 		HitInfo h = WorldHit(r, 0.001f, 1000.0f);
 		if (h.hit) {
-			color *= Scatter(h);
+			A = A + M * h.m.emissive;
+			M = M * Scatter(h);
 			if (!h.hit) break;
 			r = h.r;
 		} 
 		else {
 			float t = 0.5f * (normalize(r.B).y + 1.0f);
-			color *= skyboxSample(r.B);
+			// TODO: Parameterize
+			M = M * ((skybox_active)? skyboxSample(r.B) : vec3(0.0f));
+			depth++;
 			break;
 		}
 	}
-	return vec4(color, 1.0f);
+	return vec4(A+M, 1.0f);
 }
 
 vec3 RandomInUnitSphere() {
@@ -303,15 +510,15 @@ vec2 RandomInUnitDisk() {
 }
 
 
-//uint wang_hash(uint seed)
-//{	
-//	seed = (seed ^ 61) ^ (seed >> 16); 
-//	seed *= 9;
-//    seed = seed ^ (seed >> 4);
-//    seed *= 0x27d4eb2d;
-//    seed = seed ^ (seed >> 15);
-//    return seed;
-//}
+uint wang_hash(uint seed)
+{	
+	seed = (seed ^ 61) ^ (seed >> 16); 
+	seed *= 9;
+    seed = seed ^ (seed >> 4);
+    seed *= 0x27d4eb2d;
+    seed = seed ^ (seed >> 15);
+    return seed;
+}
 
 uint rng_state;
 
@@ -335,10 +542,10 @@ uint rand_xor()
 	rng_state ^= (rng_state << 13);
 	rng_state ^= (rng_state >> 17);
 	rng_state ^= (rng_state << 5);
-	return rng_state;
+	return wang_hash(rng_state);
 }
 
 float rng() {
-	return rand_xor() * INV_INT_MAX;
+	return rand_xor() * INV_UINT_MAX;
 }
 

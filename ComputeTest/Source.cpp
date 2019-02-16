@@ -14,6 +14,8 @@ extern "C" {
 	_declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
 }
 
+const float rad2deg = 180.0f/ 3.1415926535f;
+
 int main() {
 
 	GLFWwindow* window = nullptr;
@@ -23,6 +25,7 @@ int main() {
 	const int CHUNKS_X	  = 2;
 	const int CHUNKS_Y	  = 2;
 	const bool FULLSCREEN = true;
+	const bool SKYBOX_ACTIVE = false;
 
 	if (!glfwInit()) {
 		std::cerr << "ERR::GLFW::INIT_FAIL" << std::endl;
@@ -156,11 +159,17 @@ int main() {
 	// SSBO for rng
 	std::default_random_engine rng;
 	std::uniform_int_distribution<uint32_t> distr;
-	std::vector<GLuint> init_rng;
-	init_rng.resize(WIDTH * HEIGHT);
-	for (GLuint& i : init_rng) {
+	std::vector<GLuint> init_rng(WIDTH * HEIGHT);
+	/*for (GLuint& i : init_rng) {
 		i = distr(rng);
+	}*/
+	for (int i = 0; i < WIDTH; i++) {
+		for (int j = 0; j < HEIGHT; j++) {
+			init_rng[j*WIDTH + i] = distr(rng);
+		}
 	}
+
+
 	compshdr.use();
 	GLuint SSBO_rng;
 	glGenBuffers(1, &SSBO_rng);
@@ -168,13 +177,31 @@ int main() {
 	glBufferData(GL_SHADER_STORAGE_BUFFER, init_rng.size() * sizeof(GLuint), init_rng.data(), GL_DYNAMIC_DRAW);
 
 	// SSBO for the spheres.
-	std::vector<Sphere> obj{{ {0, 0, 0}		, 0.5f	, {0.1f, 0.2f, 0.5f}, 1.0f, MaterialType::LAMBERTIAN},
-							{ {0,-100.5,0}	, 100.0f, {0.9f, 0.9f, 0.9f}, 0.0f, MaterialType::LAMBERTIAN},
-							{ {1,0,0}		, 0.5f	, {0.8f, 0.6f, 0.2f}, 0.5f, MaterialType::METALLIC	},
-							{ {-1,0,0}		, 0.5f	, {1.0f, 1.0f, 1.0f}, 1.5f, MaterialType::DIELECTRIC},
-							{ {-1,0,0}		, -0.48f, {1.0f, 1.0f, 1.0f}, 1.5f, MaterialType::DIELECTRIC} };
+	//std::vector<Shape> obj{
+	//	(Sphere({-0.176776f, 0, -0.176776f}, 0.25f, {0.1f, 0.2f, 0.5f}, {4.0f, 4.0f, 4.0f}, 1.0f, MaterialType::LAMBERTIAN)),
+	//	(Cuboid({0, 0, 0}, {0.5f, 0.5f, 0.5f}, {0.9f, 0.9f, 0.9f}, 0.1f, MaterialType::LAMBERTIAN)),
+	//	(Rect({-0.5f, -0.5f, -0.5f}, {1.0f, 1.0f, 0.0f}, {0.1f, 0.8f, 0.1f}, 0.0f, MaterialType::LAMBERTIAN))
+	//	/*,
+	//	{ {0,-100.5,0}	, 100.0f, {0.9f, 0.9f, 0.9f}, 0.0f, MaterialType::LAMBERTIAN},
+	//	{ {1,0,0}		,	0.5f, {0.8f, 0.6f, 0.2f}, 0.5f, MaterialType::METALLIC	},
+	//	{ {-1,0,0}		,	0.5f, {1.0f, 1.0f, 1.0f}, 1.5f, MaterialType::DIELECTRIC},
+	//	{ {-1,0,0}		, -0.48f, {1.0f, 1.0f, 1.0f}, 1.5f, MaterialType::DIELECTRIC} */
+	//};
 
-	const float rif = 0.5f / (float)INT_MAX;
+	std::vector<Shape> obj{
+		(Rect(glm::vec3{-3,-3,-2}, glm::vec3(6,6,0), glm::vec3(0.73f), 1.0f, MaterialType::LAMBERTIAN)),
+		(Rect(glm::vec3(-3,-3,-2), glm::vec3(0,6,6), glm::vec3(0.65f, 0.05f, 0.05f), 1.0f, MaterialType::LAMBERTIAN)),
+		(Rect(glm::vec3(3,-3,-2), glm::vec3(0,6,6), glm::vec3(0.12f, 0.45f, 0.15f), 1.0f, MaterialType::LAMBERTIAN, -1.0f)),
+		(Rect(glm::vec3(-3,-3,-2), glm::vec3(6,0,6), glm::vec3(0.8f, 0.8f, 0.8f), 1.0f, MaterialType::LAMBERTIAN, 1.0f)),
+		(Rect(glm::vec3(-3, 3,-2), glm::vec3(6,0,6), glm::vec3(0.8f, 0.8f, 0.8f), 1.0f, MaterialType::LAMBERTIAN, -1.0f)),
+		(Rect(glm::vec3(-2.0f, 2.99f,-1.0f), glm::vec3(4,0,4), glm::vec3(0.8f, 0.8f, 0.8f), glm::vec3(2.0f), 1.0f, MaterialType::LAMBERTIAN, -1.0f)),
+		(Cuboid(glm::vec3(-2.5, -3, -1), glm::vec3(2,4,2), 20.0f, glm::vec3(0.8f), 0.1f, MaterialType::LAMBERTIAN)),
+		(Volume<Cuboid>(0.4f, glm::vec3(0.0f, -2.99, 1), glm::vec3(2,2,2), -30.0f, glm::vec3(1.0f), 0.0f, MaterialType::ISOTROPIC)),
+		(Sphere(glm::vec3(-2.5f, 1.5f, -1.0f), 0.5f, glm::vec3(1.0f), 1.5f, MaterialType::DIELECTRIC)),
+		(Volume<Sphere>(0.7f, glm::vec3(-2.5f, 1.5f, -1.0f), 0.49f, glm::vec3(0.1f, 0.1f, 0.9f), 0.1f, MaterialType::ISOTROPIC))
+	};
+
+	/*const float rif = 0.5f / (float)INT_MAX;
 	int index = 1302;
 	for (int i = -5; i < 6; i++) {
 		for (int j = -5; j < 6; j++) {
@@ -184,7 +211,7 @@ int main() {
 			else
 				obj.emplace_back(glm::vec3{ i + init_rng[index++]*rif*0.5f - 0.25f, -0.25f, j + init_rng[index++] *rif*0.5f - 0.25f }, 0.25f, glm::vec3{ 1.0f }, 1.4f, MaterialType::DIELECTRIC);
 		}
-	} 
+	} */
 
 	compshdr.use();
 	GLuint SSBO_objects;
@@ -193,7 +220,8 @@ int main() {
 	glBufferData(GL_SHADER_STORAGE_BUFFER, obj.size() * sizeof(Sphere), obj.data(), GL_STATIC_DRAW);
 
 	// Camera for the system.
-	Camera cam({ -4,3,4 }, { 0,0,0}, { 0,1,0 }, 30.0f, (float)WIDTH / (float)HEIGHT, 0.1f);
+	//Camera cam({ -4,3,4 }, { 0,0,0}, { 0,1,0 }, 30.0f, (float)WIDTH / (float)HEIGHT, 0.1f);
+	Camera cam({ 0,0,16 }, { 0,0,0 }, { 0,1,0 }, 30.0f, (float)WIDTH / (float)HEIGHT);
 	cam.Bind(compshdr);
 
 	// Variables.
@@ -203,6 +231,7 @@ int main() {
 	const int CHUNK_W = TEX_W / CHUNKS_X;
 	const int CHUNK_H = TEX_H / CHUNKS_Y;
 	const int N_CHUNKS = CHUNKS_X * CHUNKS_Y;
+	compshdr.setBool("skybox_active", SKYBOX_ACTIVE);
 	
 	// Chunks must divide the screen properly.
 	if (TEX_H%CHUNKS_Y != 0 || TEX_W % CHUNKS_X != 0) {
@@ -210,46 +239,51 @@ int main() {
 		glfwSetWindowShouldClose(window, GLFW_TRUE);
 	}
 
-	double prev = start;
-	while (!glfwWindowShouldClose(window)) {
+	double prev = start;\
+		try {
+		while (!glfwWindowShouldClose(window)) {
 
-		// Compute shader dispatch.
-		{
-			int chunk_x, chunk_y;
-			chunk_x = iteration%CHUNKS_X;
-			chunk_y = (iteration / CHUNKS_X) % CHUNKS_Y;
-			compshdr.use();
-			compshdr.setInt("iteration", (iteration++/N_CHUNKS));
-			compshdr.setFloat("time", (float)glfwGetTime());
-			compshdr.setVector("chunk", glm::ivec2(chunk_x*CHUNK_W, chunk_y * CHUNK_H));
-			glDispatchCompute((GLuint)(TEX_W / CHUNKS_X), (GLuint)(TEX_H / CHUNKS_Y), 1);
-		}
+			// Compute shader dispatch.
+			{
+				int chunk_x, chunk_y;
+				chunk_x = iteration % CHUNKS_X;
+				chunk_y = (iteration / CHUNKS_X) % CHUNKS_Y;
+				compshdr.use();
+				compshdr.setInt("iteration", (iteration++ / N_CHUNKS));
+				compshdr.setFloat("time", (float)glfwGetTime());
+				compshdr.setVector("chunk", glm::ivec2(chunk_x*CHUNK_W, chunk_y * CHUNK_H));
+				glDispatchCompute((GLuint)(TEX_W / CHUNKS_X), (GLuint)(TEX_H / CHUNKS_Y), 1);
+			}
 
-		glfwPollEvents();
-		if (glfwGetKey(window, GLFW_KEY_SPACE) || glfwGetKey(window, GLFW_KEY_ESCAPE) || glfwGetKey(window, GLFW_KEY_ENTER)) {
-			glfwSetWindowShouldClose(window, GLFW_TRUE);
-			if (glfwGetKey(window, GLFW_KEY_ENTER)) {
-				wait_after_quit = true;
+			glfwPollEvents();
+			if (glfwGetKey(window, GLFW_KEY_SPACE) || glfwGetKey(window, GLFW_KEY_ESCAPE) || glfwGetKey(window, GLFW_KEY_ENTER)) {
+				glfwSetWindowShouldClose(window, GLFW_TRUE);
+				if (glfwGetKey(window, GLFW_KEY_ENTER)) {
+					wait_after_quit = true;
+				}
+			}
+
+			// Rendering Code
+			{
+				glClear(GL_COLOR_BUFFER_BIT);
+				drawshdr.use();
+				glBindVertexArray(VAO);
+				glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+				glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+			}
+			glfwSwapBuffers(window);
+
+			if (iteration%N_CHUNKS == 0) {
+
+				// Book keeping 
+				double time = glfwGetTime();
+				std::cout << "Number of iterations: " << std::setw(4) << iteration / N_CHUNKS << " FPS: " << std::setw(7) << iteration / (N_CHUNKS * (time - start)) << " Delta: " << std::setw(7) << time - prev << "\t\t\t\r";
+				prev = time;
 			}
 		}
-
-		// Rendering Code
-		{
-			glClear(GL_COLOR_BUFFER_BIT);
-			drawshdr.use();
-			glBindVertexArray(VAO);
-			glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-		}
-		glfwSwapBuffers(window);
-
-		if (iteration%N_CHUNKS == 0) {
-
-			// Book keeping 
-			double time = glfwGetTime();
-			std::cout << "Number of iterations: " << std::setw(4) << iteration/N_CHUNKS << " FPS: " << std::setw(7) << iteration / (N_CHUNKS * (time - start)) << " Delta: " << std::setw(7) << time - prev << "\t\t\t\r";
-			prev = time;
-		}
+	}
+	catch (std::exception& e) {
+		std::cerr << e.what() << std::endl;
 	}
 	std::cout << std::endl;
 

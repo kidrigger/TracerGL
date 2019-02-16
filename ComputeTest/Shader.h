@@ -250,7 +250,7 @@ public:
 	void setVector(const std::string &name, const glm::vec<N, float, glm::packed_highp>& vec)
 	{
 		if (glGetUniformLocation(ID, name.c_str()) < 0) {
-			std::cout << "OH FUCK " << name << " doesn't exist!" << std::endl;
+			std::cout << "ERR::" << name << "_DOES_NOT_EXIST" << std::endl;
 		}
 		switch (N) {
 		case 2: {
